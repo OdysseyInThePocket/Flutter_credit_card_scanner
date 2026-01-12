@@ -277,6 +277,7 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
                 automaticallyDetectsLanguage: false,
                 languages: [const Locale('en', 'US')],
                 recognitionLevel: apple.RecognitionLevel.accurate,
+                dispatch: apple.Dispatch.background,
                 image: bytes,
                 orientation: appleOrientationFromDegrees(sensorOrientation),
                 imageSize:
