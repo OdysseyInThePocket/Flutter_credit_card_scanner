@@ -138,10 +138,11 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
   DateTime? _cameraInitTime;
 
   late final _process = ProccessCreditCard(
-      useLuhnValidation: widget.useLuhnValidation,
-      checkCreditCardNumber: widget.cardNumber,
-      checkCreditCardName: widget.cardHolder,
-      checkCreditCardExpiryDate: widget.cardExpiryDate);
+    useLuhnValidation: widget.useLuhnValidation,
+    checkCreditCardNumber: widget.cardNumber,
+    checkCreditCardName: widget.cardHolder,
+    checkCreditCardExpiryDate: widget.cardExpiryDate,
+  );
   Color get colorOverlay =>
       widget.colorOverlay ?? Colors.black.withValues(alpha: 0.8);
 
@@ -158,27 +159,26 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
               ? widget.loadingHolder
               : Stack(
                   children: [
-                    // Camera
-                    // AspectRatio(
-                    //     aspectRatio: MediaQuery.of(context).size.aspectRatio,
-                    //     child: CameraPreview(controller!)),
-
-                    // Overlay
                     Container(
                       width: size.width,
                       height: size.height,
                       color: Colors.black,
                     ),
-                    Center(child: CameraPreview(controller!)),
+                    AspectRatio(
+                      aspectRatio: MediaQuery.of(context).size.aspectRatio,
+                      child: CameraPreview(controller!),
+                    ),
 
                     Container(
                       decoration: ShapeDecoration(
-                        shape: widget.shapeBorder ??
+                        shape:
+                            widget.shapeBorder ??
                             OverlayShape(
-                                cutOutHeight: size.height * 0.3,
-                                cutOutWidth: size.width * 0.95,
-                                overlayColor: colorOverlay,
-                                borderRadius: 20),
+                              cutOutHeight: size.height * 0.3,
+                              cutOutWidth: size.width * 0.95,
+                              overlayColor: colorOverlay,
+                              borderRadius: 20,
+                            ),
                       ),
                     ),
                   ],
@@ -203,27 +203,30 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    availableCameras().then((v) async {
-      if (v.isEmpty) {
-        if (mounted) {
-          widget.onNoCamera();
-        }
-        return;
-      }
+    availableCameras()
+        .then((v) async {
+          if (v.isEmpty) {
+            if (mounted) {
+              widget.onNoCamera();
+            }
+            return;
+          }
 
-      final c = v.firstWhere(
-          (element) => element.lensDirection == CameraLensDirection.back);
+          final c = v.firstWhere(
+            (element) => element.lensDirection == CameraLensDirection.back,
+          );
 
-      _initializeCameraController(c);
-    }).onError((error, stackTrace) {
-      if (kDebugMode) {
-        log(error.toString());
-        log(stackTrace.toString());
-      }
-      if (mounted) {
-        widget.onNoCamera();
-      }
-    });
+          _initializeCameraController(c);
+        })
+        .onError((error, stackTrace) {
+          if (kDebugMode) {
+            log(error.toString());
+            log(stackTrace.toString());
+          }
+          if (mounted) {
+            widget.onNoCamera();
+          }
+        });
   }
 
   void onScanApple(List<apple.RecognizedText> list) {
@@ -268,7 +271,8 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
   void process(CameraImage image, CameraDescription description) async {
     // Skip processing if still in initial delay period (camera focusing)
     if (!_canProcess) {
-      if (_cameraInitTime != null && DateTime.now().difference(_cameraInitTime!).inMilliseconds > 1500) {
+      if (_cameraInitTime != null &&
+          DateTime.now().difference(_cameraInitTime!).inMilliseconds > 1500) {
         _canProcess = true;
       } else {
         return;
@@ -334,7 +338,9 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
     } finally {
       // Apply frame throttling to prevent UI lag
       // Use provided duration, or default to 200ms on iOS (Apple Vision is heavy)
-      final delay = widget.durationOfNextFrame ?? (Platform.isIOS ? const Duration(milliseconds: 200) : null);
+      final delay =
+          widget.durationOfNextFrame ??
+          (Platform.isIOS ? const Duration(milliseconds: 200) : null);
 
       if (delay != null) {
         Future.delayed(delay, () {
@@ -351,7 +357,8 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
   /// This method sets up the camera with the given [description],
   /// initializes the controller, and begins processing images for text recognition.
   Future<void> _initializeCameraController(
-      CameraDescription description) async {
+    CameraDescription description,
+  ) async {
     final CameraController cameraController = CameraController(
       description,
       widget.resolutionPreset ??
