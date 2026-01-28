@@ -216,7 +216,9 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
             (element) => element.lensDirection == CameraLensDirection.back,
           );
 
-          _initializeCameraController(c);
+          if (mounted) {
+            _initializeCameraController(c);
+          }
         })
         .onError((error, stackTrace) {
           if (kDebugMode) {
@@ -295,7 +297,7 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
             apple.RecognizeTextData(
                 automaticallyDetectsLanguage: false,
                 languages: [const Locale('en', 'US')],
-                recognitionLevel: apple.RecognitionLevel.accurate,
+                recognitionLevel: apple.RecognitionLevel.fast,
                 dispatch: apple.Dispatch.background,
                 image: bytes,
                 orientation: appleOrientationFromDegrees(sensorOrientation),
@@ -371,13 +373,19 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
 
     controller = cameraController;
 
-    await cameraController.initialize();
+    try {
+      await cameraController.initialize();
 
-    valueLoading.value = false;
-    _cameraInitTime = DateTime.now();
+      if (!mounted) return;
 
-    await cameraController.startImageStream((CameraImage image) async {
-      process(image, description);
-    });
+      valueLoading.value = false;
+      _cameraInitTime = DateTime.now();
+
+      await cameraController.startImageStream((CameraImage image) async {
+        process(image, description);
+      });
+    } on CameraException catch (_) {
+      // Camera was disposed during initialization - ignore
+    }
   }
 }
