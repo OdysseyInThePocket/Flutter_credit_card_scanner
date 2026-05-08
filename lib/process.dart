@@ -2,7 +2,6 @@ import 'package:credit_card_validator/credit_card_validator.dart';
 import 'package:credit_card_validator/validation_results.dart';
 
 import 'credit_card.dart';
-import 'helpers.dart';
 
 String removeNonDigits(String text) {
   final buffer = StringBuffer();
@@ -105,46 +104,26 @@ class ProccessCreditCard {
   /// Attempts to extract the expiry date from the given text.
   ///
   /// Returns the extracted expiry date in MM/YY format, or null if no date is found.
+  /// Uses simple XX/XX pattern matching to handle cases where extra digits
+  /// appear after the expiry date (e.g., "08/30 040").
   String? processDate(String text) {
-    if (text.contains(RegExp(r'\/')) &&
-        text.length > 4 &&
-        text.length < 10 &&
-        checkCreditCardExpiryDate) {
-      if (text.contains('/')) {
-        // remove everything that is not a digit and not /
+    if (!checkCreditCardExpiryDate) return null;
 
-        String cardExpirationMonthT = removeNonDigits(text.split('/').first);
-        String cardExpirationYearT = removeNonDigits(text.split('/').last);
+    // Fix common OCR errors: O misread as 0, I/l misread as 1
+    text = text.replaceAll('O', '0').replaceAll('I', '1').replaceAll('l', '1');
 
-        if (cardExpirationMonthT.length == 1) {
-          cardExpirationMonthT = '0$cardExpirationMonth';
-        }
+    // Match XX/XX pattern where X is a digit
+    final match = RegExp(r'(\d{2})/(\d{2})').firstMatch(text);
+    if (match != null) {
+      final month = match.group(1)!;
+      final year = match.group(2)!;
 
-        if (cardExpirationYearT.length >= 4) {
-          cardExpirationYearT = cardExpirationYearT.substring(2);
-        }
-
-        final fullText = '$cardExpirationMonthT/$cardExpirationYearT';
-
-        final x = _ccValidator.validateExpDate(fullText);
-        if (x.isValid) {
-          final pdate = parseDate(fullText);
-
-          if (pdate.length >= 2) {
-            cardExpirationMonth = pdate[0];
-            cardExpirationYear = pdate[1];
-          }
-          return fullExpiryDate;
-        }
-
-        // if (cardExpirationYearT.length == 2 &&
-        //     cardExpirationMonthT.length == 2) {
-        //   if (int.tryParse(cardExpirationYearT) != null &&
-        //       int.tryParse(cardExpirationMonthT) != null) {
-        //     cardExpirationMonth = cardExpirationMonthT;
-        //     cardExpirationYear = cardExpirationYearT;
-        //   }
-        // }
+      // Validate month is 01-12
+      final monthInt = int.tryParse(month);
+      if (monthInt != null && monthInt >= 1 && monthInt <= 12) {
+        cardExpirationMonth = month;
+        cardExpirationYear = year;
+        return fullExpiryDate;
       }
     }
 
@@ -185,59 +164,64 @@ class ProccessCreditCard {
   /// Attempts to extract the credit card number from the given text.
   ///
   /// Returns the extracted credit card number, or null if no number is found.
-  String? processNumber(String number) {
+  /// Supports both single-line full card numbers and multi-line card numbers
+  /// where each line contains digit groups (typically 4 digits, but can be 1-4
+  /// for cards with non-standard lengths like 17-digit Maestro cards).
+  String? processNumber(String text) {
     if (!checkCreditCardNumber) {
       return null;
     }
 
-    if (number.contains("L")) {
-      number = number.replaceAll("L", "1");
-    }
+    // Fix common OCR error: L misread as 1
+    text = text.replaceAll("L", "1");
 
-    final v = _ccValidator.validateCCNum(number,
-        ignoreLuhnValidation: !useLuhnValidation);
+    // Strip trailing OCR artifacts that start with a letter (e.g., "5127 8810 3138 2740 N1" → "5127 8810 3138 2740")
+    // The regex matches: space(s) + letter + any alphanumeric chars at end of string
+    final cleanedText = text.replaceAll(RegExp(r'\s+[a-zA-Z][a-zA-Z0-9]*$'), '').trim();
+
+    // Try direct validation first (single line with full number)
+    final v = _ccValidator.validateCCNum(cleanedText, ignoreLuhnValidation: !useLuhnValidation);
 
     if (v.isValid) {
-      cardNumber = number;
+      cardNumber = cleanedText;
       _v = v;
-
+      numberTextList.clear();
       return cardNumber;
     }
+
+    // Check for digit groups (multi-line card number support)
+    // Support groups of 1-4 digits for cards with varying lengths (e.g., 17-digit cards)
+    final digitsOnly = removeNonDigits(text);
+
+    // Skip if text contains letters (likely OCR artifact like "N1", not a card number group)
+    if (text.contains(RegExp(r'[a-zA-Z]'))) {
+      return null;
+    }
+
+    if (digitsOnly.isNotEmpty && digitsOnly.length <= 4) {
+      numberTextList.add(digitsOnly);
+
+      // Try to form a card number with current groups (supports 4-5 groups for 16-19 digit cards)
+      if (numberTextList.length >= 4 && numberTextList.length <= 5) {
+        final combined = numberTextList.join();
+        final validation = _ccValidator.validateCCNum(combined, ignoreLuhnValidation: !useLuhnValidation);
+
+        if (validation.isValid) {
+          cardNumber = combined;
+          _v = validation;
+          numberTextList.clear();
+          return cardNumber;
+        } else if (numberTextList.length == 5) {
+          // If 5 groups didn't work, remove oldest and keep trying
+          numberTextList.removeAt(0);
+        }
+      }
+    } else if (digitsOnly.length > 4) {
+      // Reset accumulator if we see a line with more than 4 digits
+      numberTextList.clear();
+    }
+
     return null;
-
-    // // remove all non-numeric characters from the input text and keep the numbers
-    // final text = removeNonDigitsKeepSpaces(v);
-
-    // if (text.contains(RegExp(r'[0-9]')) && checkCreditCardNumber) {
-    //   if (text.contains(' ') &&
-    //       int.tryParse(text.replaceAll(" ", "")) != null &&
-    //       text.split(" ").length == 4 &&
-    //       text.split(" ").every((element) => element.length == 4) &&
-    //       text.length > 8) {
-    //     cardNumber = text;
-    //     numberTextList.clear();
-    //   }
-
-    //   if (!onlySpaces) {
-    //     if (v.length == 4 && int.tryParse(v) != null) {
-    //       numberTextList.add(v);
-    //       if (numberTextList.length == 4) {
-    //         cardNumber = numberTextList.join(' ');
-
-    //         numberTextList.clear();
-
-    //         return cardNumber;
-    //       }
-    //     }
-
-    //     if (text.length >= 16 && int.tryParse(text) != null) {
-    //       numberTextList.clear();
-
-    //       cardNumber = text;
-    //     }
-    //   }
-    // }
-    // return cardNumber.isEmpty ? null : cardNumber;
   }
 
   /// Processes the given text to extract credit card information.
