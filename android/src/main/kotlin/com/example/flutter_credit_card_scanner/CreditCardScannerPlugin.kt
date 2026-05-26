@@ -1,5 +1,7 @@
 package com.example.flutter_credit_card_scanner
 
+import android.content.Context
+import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
@@ -9,14 +11,17 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import java.io.File
 
 /** CreditCardScannerPlugin */
 class CreditCardScannerPlugin : FlutterPlugin, MethodCallHandler {
   private lateinit var channel: MethodChannel
+  private lateinit var context: Context
   private val recognizer: TextRecognizer =
     TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
   override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+    context = flutterPluginBinding.applicationContext
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_credit_card_scanner")
     channel.setMethodCallHandler(this)
   }
@@ -24,6 +29,7 @@ class CreditCardScannerPlugin : FlutterPlugin, MethodCallHandler {
   override fun onMethodCall(call: MethodCall, result: Result) {
     when (call.method) {
       "recognizeText" -> recognizeText(call, result)
+      "recognizeTextFromFile" -> recognizeTextFromFile(call, result)
       "getPlatformVersion" -> result.success("Android ${android.os.Build.VERSION.RELEASE}")
       else -> result.notImplemented()
     }
@@ -63,6 +69,24 @@ class CreditCardScannerPlugin : FlutterPlugin, MethodCallHandler {
           e.message ?: "Text recognition failed",
           null,
         )
+      }
+  }
+
+  private fun recognizeTextFromFile(call: MethodCall, result: Result) {
+    val path = call.argument<String>("path")
+    if (path == null) {
+      result.error("missing_arguments", "path is required", null)
+      return
+    }
+    // fromFilePath reads EXIF orientation automatically, avoiding mis-rotated OCR.
+    val image = InputImage.fromFilePath(context, Uri.fromFile(File(path)))
+    recognizer.process(image)
+      .addOnSuccessListener { text ->
+        val lines = text.textBlocks.flatMap { it.lines }.map { it.text }
+        result.success(lines)
+      }
+      .addOnFailureListener { e ->
+        result.error("recognize_failed", e.message ?: "Text recognition failed", null)
       }
   }
 
