@@ -236,6 +236,7 @@ class _CameraScannerWidgetState extends State<CameraScannerWidget>
 
     for (var item in list) {
       for (var element in item.listText) {
+        if (widget.debug) log(element);
         _process.processNumber(element);
         _process.processName(element);
         _process.processDate(element);

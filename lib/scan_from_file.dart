@@ -1,7 +1,9 @@
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:apple_vision_recognize_text/apple_vision_recognize_text.dart'
     as apple;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -44,6 +46,7 @@ Future<ScanResult> scanFromFile(
   bool detectIbans = true,
   bool useLuhnValidation = true,
   bool validateIbanChecksum = true,
+  bool debug = kDebugMode,
 }) async {
   final lines = <String>[];
   var rawText = '';
@@ -81,24 +84,30 @@ Future<ScanResult> scanFromFile(
     rawText = lines.join('\n');
   }
 
-  final process = ProccessCreditCard(
-    useLuhnValidation: useLuhnValidation,
-    checkCreditCardNumber: detectCardNumber,
-    checkCreditCardName: detectCardHolder,
-    checkCreditCardExpiryDate: detectCardExpiryDate,
-  );
-
-  for (final line in lines) {
-    process.processNumber(line);
-    process.processName(line);
-    process.processDate(line);
+  if (debug) {
+    log('[scanFromFile] OCR lines (${lines.length} total):');
+    for (final line in lines) {
+      log('[scanFromFile] OCR line: "$line"');
+    }
   }
 
+  // Static scans have the full OCR line set up front, so reason over all lines
+  // at once instead of the live camera's stateful per-line accumulator.
+  final card = extractCardFromLines(
+    lines,
+    detectCardNumber: detectCardNumber,
+    detectCardHolder: detectCardHolder,
+    detectCardExpiryDate: detectCardExpiryDate,
+    useLuhnValidation: useLuhnValidation,
+  );
+  final ibans = detectIbans
+      ? extractIbans(rawText, validateChecksum: validateIbanChecksum)
+      : const <String>[];
+  if (debug) log('[scanFromFile] result — card: $card, ibans: $ibans');
+
   return ScanResult(
-    card: process.getCreditCardModel(),
-    ibans: detectIbans
-        ? extractIbans(rawText, validateChecksum: validateIbanChecksum)
-        : const [],
+    card: card,
+    ibans: ibans,
     rawText: rawText,
   );
 }
