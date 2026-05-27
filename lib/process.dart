@@ -2,6 +2,7 @@ import 'package:credit_card_validator/credit_card_validator.dart';
 import 'package:credit_card_validator/validation_results.dart';
 
 import 'credit_card.dart';
+import 'iban.dart';
 
 String removeNonDigits(String text) {
   final buffer = StringBuffer();
@@ -212,7 +213,9 @@ class ProccessCreditCard {
           numberTextList.clear();
           return cardNumber;
         } else if (numberTextList.length == 5) {
-          // If 5 groups didn't work, remove oldest and keep trying
+          // If 5 groups didn't work, remove oldest and keep trying on the next
+          // frame. Static scans use extractCardFromLines, which reasons over all
+          // lines at once, so this path is camera-only.
           numberTextList.removeAt(0);
         }
       }
@@ -240,4 +243,163 @@ class ProccessCreditCard {
 
     return getCreditCardModel();
   }
+}
+
+/// Extracts a credit card from a complete set of OCR lines in a single pass.
+///
+/// This is the extraction path for static image scans, where the entire OCR
+/// result is available up front. Unlike [ProccessCreditCard.processNumber] —
+/// which is built for the live camera stream, accumulates digit groups
+/// statefully, and relies on later frames to re-trigger validation — this
+/// reasons over all [lines] at once, so it deterministically handles
+/// label-prefixed PAN lines ("CARD 1234 ..."), IBAN-before-card ordering, and
+/// PANs split across multiple lines.
+///
+/// Returns a [CreditCardModel] honouring the detect flags, or null when a
+/// requested field could not be found. The live [CameraScannerWidget] is not
+/// affected — it keeps using [ProccessCreditCard.processNumber].
+CreditCardModel? extractCardFromLines(
+  List<String> lines, {
+  bool detectCardNumber = true,
+  bool detectCardHolder = true,
+  bool detectCardExpiryDate = true,
+  bool useLuhnValidation = true,
+}) {
+  final proc = ProccessCreditCard(
+    useLuhnValidation: useLuhnValidation,
+    checkCreditCardNumber: detectCardNumber,
+    checkCreditCardName: detectCardHolder,
+    checkCreditCardExpiryDate: detectCardExpiryDate,
+  );
+
+  if (detectCardNumber) {
+    final candidate =
+        _findCardNumber(lines, useLuhnValidation: useLuhnValidation);
+    if (candidate != null) {
+      proc.cardNumber = candidate.number;
+      proc._v = candidate.results;
+    }
+  }
+
+  // Cardholder name and expiry reuse the existing per-line logic; both methods
+  // no-op when their detect flag is disabled.
+  for (final line in lines) {
+    proc.processName(line);
+    proc.processDate(line);
+  }
+
+  return proc.getCreditCardModel();
+}
+
+/// A validated card-number candidate found while scanning OCR lines.
+class _CardCandidate {
+  const _CardCandidate(
+    this.number,
+    this.results,
+    this.lineIndex,
+    this.singleLine,
+  );
+
+  /// Digits-only card number (no spaces).
+  final String number;
+
+  /// Validation results, carried onto the [CreditCardModel].
+  final CCNumValidationResults results;
+
+  /// Index of the (first) source line — used as a tie-breaker.
+  final int lineIndex;
+
+  /// Whether the number came from one line (true) or assembled groups (false).
+  final bool singleLine;
+
+  int get length => number.length;
+}
+
+/// Scans [lines] for the best valid card number, considering the full set at
+/// once rather than line-by-line accumulation.
+_CardCandidate? _findCardNumber(
+  List<String> lines, {
+  required bool useLuhnValidation,
+}) {
+  final validator = CreditCardValidator();
+
+  // Per-line digit strings. Lines that are themselves an IBAN are blanked so
+  // their all-digit groups can never feed a PAN candidate — this is the exact
+  // contamination behind the multi-line accumulation bug. A lenient (no
+  // checksum) IBAN match is used so even a checksum-broken OCR'd IBAN is
+  // excluded; card-number lines never match the IBAN grammar.
+  final perLineDigits = <String>[];
+  for (final line in lines) {
+    if (extractIbans(line, validateChecksum: false).isNotEmpty) {
+      perLineDigits.add('');
+    } else {
+      perLineDigits.add(_digitsForCardScan(line));
+    }
+  }
+
+  final candidates = <_CardCandidate>[];
+
+  // 1) A single line carrying a full PAN (handles label prefixes like "CARD").
+  for (var i = 0; i < perLineDigits.length; i++) {
+    final digits = perLineDigits[i];
+    if (digits.length >= 13 && digits.length <= 19) {
+      final res =
+          validator.validateCCNum(digits, ignoreLuhnValidation: !useLuhnValidation);
+      if (res.isValid) candidates.add(_CardCandidate(digits, res, i, true));
+    }
+  }
+
+  // 2) A PAN split across consecutive group-like lines (1-4 digits each).
+  for (var i = 0; i < perLineDigits.length; i++) {
+    if (perLineDigits[i].isEmpty || perLineDigits[i].length > 4) continue;
+    final buffer = StringBuffer();
+    for (var j = i; j < perLineDigits.length; j++) {
+      final digits = perLineDigits[j];
+      if (digits.isEmpty || digits.length > 4) break;
+      buffer.write(digits);
+      final combined = buffer.toString();
+      if (combined.length > 19) break;
+      if (combined.length >= 13) {
+        final res = validator.validateCCNum(combined,
+            ignoreLuhnValidation: !useLuhnValidation);
+        if (res.isValid) candidates.add(_CardCandidate(combined, res, i, false));
+      }
+    }
+  }
+
+  if (candidates.isEmpty) return null;
+
+  // Prefer the longest valid number (most complete), then a single-line match
+  // over an assembled one, then the earliest in reading order.
+  candidates.sort((a, b) {
+    if (a.length != b.length) return b.length.compareTo(a.length);
+    if (a.singleLine != b.singleLine) return a.singleLine ? -1 : 1;
+    return a.lineIndex.compareTo(b.lineIndex);
+  });
+
+  return candidates.first;
+}
+
+/// Pulls the digits from a line for card-number matching.
+///
+/// Repairs the OCR confusables this codebase already handles (O→0, I/l/L→1)
+/// per whitespace-separated token, then keeps a token only if nothing but
+/// digits remains. This means:
+///   - a standalone confusable like "O" survives as the digit it represents
+///     (e.g. "… 4702 O" → "…47020"), and
+///   - a label ("CARD") or a letter-glued artifact ("N3", "N1") is dropped
+///     whole, so it can never inject a stray digit into the PAN.
+String _digitsForCardScan(String line) {
+  final buffer = StringBuffer();
+  for (final token in line.split(RegExp(r'\s+'))) {
+    final repaired = token
+        .replaceAll('O', '0')
+        .replaceAll('I', '1')
+        .replaceAll('l', '1')
+        .replaceAll('L', '1');
+    // A residual non-confusable letter marks a label or artifact, not PAN digits.
+    if (repaired.contains(RegExp(r'[a-zA-Z]'))) continue;
+    buffer.write(removeNonDigits(repaired));
+  }
+  return buffer.toString();
 }

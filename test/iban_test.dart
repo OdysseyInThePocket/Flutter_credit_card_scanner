@@ -33,6 +33,13 @@ void main() {
         const text = 'IBAN BE68 5390 0754 7034';
         expect(extractIbans(text), equals(['BE68539007547034']));
       });
+
+      test('space after check digits + unbroken BBAN run', () {
+        // BBAN is a single 12-digit run, not split into print groups, with a
+        // space only after the check digits ("BE97 652822032949").
+        const text = 'IBAN BE97 652822032949';
+        expect(extractIbans(text), equals(['BE97652822032949']));
+      });
     });
 
     group('invalid IBANs rejected', () {

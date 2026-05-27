@@ -30,11 +30,13 @@ List<String> extractIbans(String text, {bool validateChecksum = true}) {
   final results = <String>{};
 
   // Two alternatives to avoid cross-word greedy consumption:
-  //   1. Compact  — no spaces, continuous alphanumeric BBAN
+  //   1. Compact  — continuous alphanumeric BBAN, with an optional single space
+  //                 after the check digits (handles "BE97 652822032949" where the
+  //                 BBAN is one unbroken run, not split into print groups)
   //   2. Grouped  — BBAN split into 1-4 char groups separated by single spaces
   //                 (standard print format: "BE68 5390 0754 7034")
   final pattern = RegExp(
-    r'[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}'
+    r'[A-Z]{2}[0-9]{2} ?[A-Z0-9]{11,30}'
     r'|'
     // Optional space between check-digits and first BBAN group handles standard
     // print format "BE68 5390 0754 7034" as well as no-separator variants.
