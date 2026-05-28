@@ -340,26 +340,30 @@ _CardCandidate? _findCardNumber(
   final candidates = <_CardCandidate>[];
 
   // 1) A single line carrying a full PAN (handles label prefixes like "CARD").
+  // Length is left implicit: validate any non-empty digit string and let the
+  // validator decide, mirroring the camera path's direct validation. The
+  // validator rejects anything that isn't a real PAN (type + length + Luhn).
   for (var i = 0; i < perLineDigits.length; i++) {
     final digits = perLineDigits[i];
-    if (digits.length >= 13 && digits.length <= 19) {
-      final res =
-          validator.validateCCNum(digits, ignoreLuhnValidation: !useLuhnValidation);
-      if (res.isValid) candidates.add(_CardCandidate(digits, res, i, true));
-    }
+    if (digits.isEmpty) continue;
+    final res =
+        validator.validateCCNum(digits, ignoreLuhnValidation: !useLuhnValidation);
+    if (res.isValid) candidates.add(_CardCandidate(digits, res, i, true));
   }
 
   // 2) A PAN split across consecutive group-like lines (1-4 digits each).
+  // Gate on group structure (a 4-5 group window) like the camera accumulator
+  // and let the validator enforce length, rather than an explicit char window.
   for (var i = 0; i < perLineDigits.length; i++) {
     if (perLineDigits[i].isEmpty || perLineDigits[i].length > 4) continue;
-    final buffer = StringBuffer();
+    final groups = <String>[];
     for (var j = i; j < perLineDigits.length; j++) {
       final digits = perLineDigits[j];
       if (digits.isEmpty || digits.length > 4) break;
-      buffer.write(digits);
-      final combined = buffer.toString();
-      if (combined.length > 19) break;
-      if (combined.length >= 13) {
+      groups.add(digits);
+      if (groups.length > 5) break;
+      if (groups.length >= 4) {
+        final combined = groups.join();
         final res = validator.validateCCNum(combined,
             ignoreLuhnValidation: !useLuhnValidation);
         if (res.isValid) candidates.add(_CardCandidate(combined, res, i, false));
