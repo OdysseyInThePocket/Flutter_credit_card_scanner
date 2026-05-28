@@ -144,8 +144,9 @@ class ProccessCreditCard {
       final hasNumber = text.contains(RegExp(r'[0-9]'));
       if (hasSpace) {
         final lines = text.split('\n');
-        final validLines =
-            lines.where((line) => line.trim().isNotEmpty && line.contains(' '));
+        final validLines = lines.where(
+          (line) => line.trim().isNotEmpty && line.contains(' '),
+        );
 
         if (validLines.isNotEmpty) {
           if (hasNumber) {
@@ -346,27 +347,41 @@ _CardCandidate? _findCardNumber(
   for (var i = 0; i < perLineDigits.length; i++) {
     final digits = perLineDigits[i];
     if (digits.isEmpty) continue;
-    final res =
-        validator.validateCCNum(digits, ignoreLuhnValidation: !useLuhnValidation);
+    final res = validator.validateCCNum(
+      digits,
+      ignoreLuhnValidation: !useLuhnValidation,
+    );
     if (res.isValid) candidates.add(_CardCandidate(digits, res, i, true));
   }
 
   // 2) A PAN split across consecutive group-like lines (1-4 digits each).
   // Gate on group structure (a 4-5 group window) like the camera accumulator
   // and let the validator enforce length, rather than an explicit char window.
+  // Up to 2 consecutive empty-digit lines (labels, BIC lines, etc.) between
+  // groups are skipped so that interleaved text doesn't break accumulation.
   for (var i = 0; i < perLineDigits.length; i++) {
     if (perLineDigits[i].isEmpty || perLineDigits[i].length > 4) continue;
     final groups = <String>[];
+    var skippedEmpty = 0;
     for (var j = i; j < perLineDigits.length; j++) {
       final digits = perLineDigits[j];
-      if (digits.isEmpty || digits.length > 4) break;
+      if (digits.length > 4) break; // Long non-group line — stop here.
+      if (digits.isEmpty) {
+        skippedEmpty++;
+        if (skippedEmpty > 2) break; // Too many label lines between groups.
+        continue;
+      }
+      skippedEmpty = 0;
       groups.add(digits);
       if (groups.length > 5) break;
       if (groups.length >= 4) {
         final combined = groups.join();
-        final res = validator.validateCCNum(combined,
-            ignoreLuhnValidation: !useLuhnValidation);
-        if (res.isValid) candidates.add(_CardCandidate(combined, res, i, false));
+        final res = validator.validateCCNum(
+          combined,
+          ignoreLuhnValidation: !useLuhnValidation,
+        );
+        if (res.isValid)
+          candidates.add(_CardCandidate(combined, res, i, false));
       }
     }
   }
@@ -396,7 +411,9 @@ _CardCandidate? _findCardNumber(
 String _digitsForCardScan(String line) {
   final buffer = StringBuffer();
   for (final token in line.split(RegExp(r'\s+'))) {
-    final repaired = token
+    // Strip pipe characters — OCR artifacts from card edges or border lines.
+    final depiped = token.replaceAll('|', '');
+    final repaired = depiped
         .replaceAll('O', '0')
         .replaceAll('I', '1')
         .replaceAll('l', '1')
