@@ -386,13 +386,13 @@ _CardCandidate? _findCardNumber(
 
 /// Pulls the digits from a line for card-number matching.
 ///
-/// Repairs the OCR confusables this codebase already handles (O→0, I/l/L→1)
-/// per whitespace-separated token, then keeps a token only if nothing but
-/// digits remains. This means:
+/// Repairs OCR confusables (O→0, I/l/L→1, etc.) per whitespace-separated
+/// token, then keeps a token only if it consists entirely of digits after
+/// repair. This means:
 ///   - a standalone confusable like "O" survives as the digit it represents
 ///     (e.g. "… 4702 O" → "…47020"), and
-///   - a label ("CARD") or a letter-glued artifact ("N3", "N1") is dropped
-///     whole, so it can never inject a stray digit into the PAN.
+///   - any token containing punctuation (price amounts, timestamps, currency
+///     symbols) or letters is dropped whole — it cannot inject digits into the PAN.
 String _digitsForCardScan(String line) {
   final buffer = StringBuffer();
   for (final token in line.split(RegExp(r'\s+'))) {
@@ -401,9 +401,10 @@ String _digitsForCardScan(String line) {
         .replaceAll('I', '1')
         .replaceAll('l', '1')
         .replaceAll('L', '1');
-    // A residual non-confusable letter marks a label or artifact, not PAN digits.
-    if (repaired.contains(RegExp(r'[a-zA-Z]'))) continue;
-    buffer.write(removeNonDigits(repaired));
+    // Any non-digit character after confusable repair means this token is a
+    // label, price amount, timestamp, or other artifact — not a PAN group.
+    if (repaired.contains(RegExp(r'[^0-9]'))) continue;
+    buffer.write(repaired);
   }
   return buffer.toString();
 }
